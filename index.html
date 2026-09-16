@@ -575,6 +575,7 @@
   });
 
   closeBtn.addEventListener("click", function () {
+    stopSuspenseSound(); // עצירה מיידית - close עוצר גם ספירה פעילה
     sendCmd("close");
   });
 
