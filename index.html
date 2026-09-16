@@ -251,7 +251,7 @@
   <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
   <div class="action-row">
     <button class="btn secondary" id="resetBtn" disabled>איפוס</button>
-    <button class="btn secondary" id="closeBtn" disabled>סגור עכשיו</button>
+    <button class="btn secondary" id="triggerBtn" disabled>הפעל עכשיו</button>
     <button class="btn" id="startBtn" disabled>התחל טיימר</button>
   </div>
 </div>
@@ -412,7 +412,7 @@
   var progressFill = document.getElementById("progressFill");
   var startBtn = document.getElementById("startBtn");
   var resetBtn = document.getElementById("resetBtn");
-  var closeBtn = document.getElementById("closeBtn");
+  var triggerBtn = document.getElementById("triggerBtn");
   var durationSlider = document.getElementById("durationSlider");
   var durationLabel = document.getElementById("durationLabel");
   var rateSlider = document.getElementById("rateSlider");
@@ -499,7 +499,7 @@
     startBtn.disabled = !known || wasRunning;
     startBtn.classList.toggle("needs-reset", known && !wasRunning && !readyToStart);
     resetBtn.disabled = !known;
-    closeBtn.disabled = !known; // סגירה יזומה - זמינה תמיד כשהבקר מחובר, גם תוך כדי ריצה
+    triggerBtn.disabled = !known; // הפעלה יזומה - זמינה תמיד כשהבקר מחובר, גם תוך כדי ריצה
     durationSlider.disabled = !known || wasRunning;
     rateSlider.disabled = !known;
   }
@@ -574,10 +574,10 @@
     sendCmd("reset");
   });
 
-  closeBtn.addEventListener("click", function () {
-    stopSuspenseSound(); // עצירה מיידית - close עוצר גם ספירה פעילה
-    if (wasRunning) playFailureBuzzer(); // בוטל תוך כדי ריצה - כמו "כישלון משימה"
-    sendCmd("close");
+  triggerBtn.addEventListener("click", function () {
+    stopSuspenseSound(); // עצירה מיידית - trigger עוצר גם ספירה פעילה
+    playFailureBuzzer(); // מדמה סיום מוקדם - אותו צליל כמו סיום טבעי
+    sendCmd("trigger");
   });
 
   // ---- משך הטיימר ----
