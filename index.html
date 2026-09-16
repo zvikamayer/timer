@@ -576,6 +576,7 @@
 
   closeBtn.addEventListener("click", function () {
     stopSuspenseSound(); // עצירה מיידית - close עוצר גם ספירה פעילה
+    if (wasRunning) playFailureBuzzer(); // בוטל תוך כדי ריצה - כמו "כישלון משימה"
     sendCmd("close");
   });
 
