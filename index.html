@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>טיימר סרוו</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700&family=Heebo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
+
+<style>
+  /* ---- ערכת נושא "משימה בלתי אפשרית" - שחור/אדום קבוע, לא תלוי בהגדרת המערכת ---- */
+  :root {
+    --bg: #050505;
+    --surface: #131313;
+    --surface-2: #1c1414;
+    --line: #3a1216;
+    --ink: #f2eeee;
+    --ink-dim: #8a7373;
+    --accent: #e0101f;
+    --accent-glow: rgba(224, 16, 31, 0.55);
+    --accent-ink: #ffffff;
+    --good: #ff2536;
+    --good-bg: rgba(255, 37, 54, 0.14);
+    --danger: #ff6a4d;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 28px rgba(0, 0, 0, 0.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Heebo", "Segoe UI", sans-serif;
+  }
+
+  /* ---- מסך ראשי: הטיימר, תופס מסך מלא (מוצג לקהל) ---- */
+  .hero {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(20px, 4vh, 40px);
+    padding: 28px 20px;
+    text-align: center;
+  }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 9px; padding: 9px 18px; border-radius: 999px;
+    font-size: clamp(0.9rem, 1.6vw, 1.1rem); font-weight: 600; background: var(--surface-2); color: var(--ink-dim);
+    border: 1px solid var(--line); white-space: nowrap;
+  }
+
+  .status-pill .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-dim); flex-shrink: 0; }
+  .status-pill.on { background: var(--good-bg); color: var(--good); border-color: transparent; }
+  .status-pill.on .dot { background: var(--good); box-shadow: 0 0 0 5px color-mix(in srgb, var(--good) 22%, transparent); animation: pulse 1.8s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) { .status-pill.on .dot { animation: none; } }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--good) 22%, transparent); }
+    50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--good) 10%, transparent); }
+  }
+
+  .countdown {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: clamp(6rem, 26vw, 18rem);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+    line-height: 1;
+    direction: ltr;
+    color: var(--ink-dim);
+    text-shadow: none;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+  }
+
+  .countdown.running {
+    color: var(--accent);
+    text-shadow: 0 0 30px var(--accent-glow), 0 0 70px var(--accent-glow);
+    animation: countdownPulse 1s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) { .countdown.running { animation: none; } }
+
+  @keyframes countdownPulse {
+    0%, 100% { text-shadow: 0 0 30px var(--accent-glow), 0 0 70px var(--accent-glow); }
+    50% { text-shadow: 0 0 50px var(--accent-glow), 0 0 110px var(--accent-glow); }
+  }
+
+  /* ---- הבהוב "חימוש" עדין על כל המסך כשהטיימר פועל ---- */
+  .alert-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    box-shadow: inset 0 0 0 rgba(224, 16, 31, 0);
+  }
+
+  body.armed .alert-overlay { animation: alertPulse 1.2s ease-in-out infinite; }
+
+  @media (prefers-reduced-motion: reduce) { body.armed .alert-overlay { animation: none; } }
+
+  @keyframes alertPulse {
+    0%, 100% { box-shadow: inset 0 0 70px rgba(224, 16, 31, 0.18); }
+    50% { box-shadow: inset 0 0 160px rgba(224, 16, 31, 0.4); }
+  }
+
+  .progress-track {
+    width: min(90vw, 640px); height: clamp(10px, 1.6vh, 16px); border-radius: 999px;
+    background: var(--surface-2); overflow: hidden;
+  }
+  .progress-fill { height: 100%; width: 100%; background: var(--accent); border-radius: 999px; transition: width 0.15s linear; }
+
+  .action-row { display: flex; gap: 16px; width: min(90vw, 480px); }
+  button { font-family: inherit; cursor: pointer; }
+
+  .btn {
+    flex: 1; border: none; border-radius: 12px; padding: clamp(14px, 2.2vh, 20px) 20px;
+    font-size: clamp(1rem, 2vw, 1.25rem); font-weight: 700;
+    background: var(--accent); color: var(--accent-ink);
+    box-shadow: 0 2px 0 color-mix(in srgb, var(--accent) 60%, black 15%);
+    transition: transform 0.08s ease, box-shadow 0.08s ease, opacity 0.15s ease;
+  }
+
+  .btn:hover { filter: brightness(1.04); }
+  .btn:active { transform: translateY(2px); box-shadow: 0 0 0 color-mix(in srgb, var(--accent) 60%, black 15%); }
+  .btn.secondary { background: var(--surface-2); color: var(--ink); box-shadow: 0 2px 0 var(--line); }
+  .btn.secondary:active { box-shadow: 0 0 0 var(--line); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- הגדרות: קטן, למטה, לא לצפייה מהקהל ---- */
+  .lower {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 0 16px 28px;
+  }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+
+  .settings-card { padding: 12px 16px 14px; display: flex; flex-direction: column; gap: 12px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field-head { display: flex; align-items: center; justify-content: space-between; }
+  .field-head strong { font-size: 0.72rem; font-weight: 600; color: var(--ink-dim); }
+  .field-head span { font-family: "IBM Plex Mono", monospace; font-size: 0.75rem; font-weight: 600; color: var(--accent); }
+  .field small { font-size: 0.66rem; color: var(--ink-dim); }
+
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 5px; border-radius: 999px;
+    background: var(--surface-2); outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--surface); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); cursor: pointer; border: none;
+  }
+  input[type="range"]:disabled { opacity: 0.5; }
+
+  .thin-divider { height: 1px; background: var(--line); }
+
+  .servo-card { padding: 10px 16px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .servo-row { display: flex; align-items: center; justify-content: space-between; }
+  .servo-row strong { font-size: 0.72rem; font-weight: 600; color: var(--ink-dim); }
+  .servo-row .status-pill { padding: 3px 10px; font-size: 0.68rem; gap: 5px; }
+  .servo-row .status-pill .dot { width: 7px; height: 7px; }
+
+  .gauge-track {
+    position: relative; direction: ltr; height: 5px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--line);
+  }
+  .gauge-fill { position: absolute; top: 0; bottom: 0; left: 0; width: 0%; border-radius: 999px; background: var(--accent); transition: width 0.15s linear; }
+  .gauge-labels { display: flex; justify-content: space-between; font-family: "IBM Plex Mono", monospace; font-size: 0.6rem; color: var(--ink-dim); direction: ltr; }
+
+  .foot-note { font-size: 0.66rem; color: var(--ink-dim); text-align: center; line-height: 1.5; }
+
+  /* ---- שעון ותאריך קטנים בפינה ---- */
+  .corner-clock {
+    position: fixed;
+    bottom: 10px;
+    left: 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--ink-dim);
+    opacity: 0.75;
+    direction: ltr;
+    pointer-events: none;
+    z-index: 10;
+  }
+</style>
+</head>
+<body>
+
+<div class="alert-overlay"></div>
+
+<div class="hero">
+  <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">טוען…</span></div>
+  <div class="countdown" id="countdown">--:--</div>
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="action-row">
+    <button class="btn secondary" id="resetBtn" disabled>איפוס</button>
+    <button class="btn" id="startBtn" disabled>התחל טיימר</button>
+  </div>
+</div>
+
+<div class="lower">
+  <div class="card settings-card">
+    <div class="field">
+      <div class="field-head"><strong>משך הטיימר</strong><span id="durationLabel">-- שניות</span></div>
+      <input type="range" id="durationSlider" min="1" max="59" step="1" value="10" disabled>
+      <small>עד 59 שניות. אי אפשר לשנות בזמן שהספירה פעילה.</small>
+    </div>
+
+    <div class="thin-divider"></div>
+
+    <div class="field">
+      <div class="field-head"><strong>קצב פתיחה ל-90°</strong><span id="rateLabel">-- שניות</span></div>
+      <input type="range" id="rateSlider" min="0.1" max="10" step="0.1" value="1.0" disabled>
+      <small>שניות לתנועה מלאה של 90 מעלות (עד עשירית שנייה, למשל 1.1).</small>
+    </div>
+  </div>
+
+  <div class="card servo-card">
+    <div class="servo-row">
+      <strong>מצב הסרוו</strong>
+      <span class="status-pill" id="servoPill"><span class="dot"></span><span id="servoStateText">—</span></span>
+    </div>
+    <div class="gauge-track"><div class="gauge-fill" id="gaugeFill"></div></div>
+    <div class="gauge-labels"><span>0°</span><span>90°</span><span>180°</span></div>
+  </div>
+
+  <div class="foot-note" id="footNote">מתחבר…</div>
+</div>
+
+<div class="corner-clock">
+  <span id="cornerTime">00:00:00</span>
+  <span id="cornerDate">—</span>
+</div>
+
+<script>
+  function pad(n) { return String(n).padStart(2, "0"); }
+  var DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+  // ---- שעון ותאריך קטנים בפינה (שעון הדפדפן שלך) ----
+  var cornerTime = document.getElementById("cornerTime");
+  var cornerDate = document.getElementById("cornerDate");
+  function renderClock() {
+    var now = new Date();
+    cornerTime.textContent = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+    cornerDate.textContent = pad(now.getDate()) + "/" + pad(now.getMonth() + 1) + "/" + now.getFullYear();
+  }
+  renderClock();
+  setInterval(renderClock, 1000);
+
+  // ---- "מוזיקת מתח" מסונתזת (Web Audio API) - מתנגנת רק כשהטיימר פועל.
+  // לא מדובר בשיר מוגן בזכויות יוצרים - זה דרון פועם + טיקים מואצים,
+  // שמדמים מתח של ספירה לאחור בלי להעתיק מנגינה קיימת.
+  var audioCtx = null;
+  var suspenseNodes = null;
+  var tickTimeoutId = null;
+  var latestRemainingMs = null;
+
+  function ensureAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playTick() {
+    var ctx = ensureAudioCtx();
+    var t = ctx.currentTime;
+    var osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.value = 900;
+    var g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.16, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    osc.connect(g).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.1);
+  }
+
+  function scheduleTicks() {
+    clearTimeout(tickTimeoutId);
+    (function tick() {
+      if (!suspenseNodes) return;
+      playTick();
+      var interval = latestRemainingMs !== null && latestRemainingMs <= 5000 ? 260 : 550;
+      tickTimeoutId = setTimeout(tick, interval);
+    })();
+  }
+
+  function startSuspenseSound() {
+    if (suspenseNodes) return;
+    var ctx = ensureAudioCtx();
+
+    var osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = 55;
+    var gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.05, ctx.currentTime + 0.4);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+
+    var lfo = ctx.createOscillator();
+    lfo.frequency.value = 5;
+    var lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.03;
+    lfo.connect(lfoGain).connect(gain.gain);
+    lfo.start();
+
+    suspenseNodes = { osc: osc, gain: gain, lfo: lfo };
+    scheduleTicks();
+  }
+
+  function stopSuspenseSound() {
+    clearTimeout(tickTimeoutId);
+    if (!suspenseNodes) return;
+    var ctx = audioCtx;
+    var t = ctx.currentTime;
+    suspenseNodes.gain.gain.cancelScheduledValues(t);
+    suspenseNodes.gain.gain.setTargetAtTime(0, t, 0.08);
+    suspenseNodes.osc.stop(t + 0.3);
+    suspenseNodes.lfo.stop(t + 0.3);
+    suspenseNodes = null;
+  }
+
+  // באזר "אי-הצלחה" - מתנגן כשהטיימר מגיע ל-0 בעצמו (לא כשלוחצים "איפוס").
+  // שני גלי סאו קרובים (מכות/דיסוננס) עם ירידת גובה צליל - צליל "טעות" מוכר, מסונתז לגמרי.
+  function playFailureBuzzer() {
+    var ctx = ensureAudioCtx();
+    var t = ctx.currentTime;
+    var duration = 1.1;
+
+    [140, 148].forEach(function (freq) {
+      var osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.linearRampToValueAtTime(freq * 0.6, t + duration);
+      var g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.18, t + 0.05);
+      g.gain.setValueAtTime(0.18, t + duration - 0.15);
+      g.gain.linearRampToValueAtTime(0.0001, t + duration);
+      osc.connect(g).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + duration + 0.05);
+    });
+  }
+
+  // ---- אלמנטים ----
+  var pill = document.getElementById("statusPill");
+  var statusText = document.getElementById("statusText");
+  var countdownEl = document.getElementById("countdown");
+  var progressFill = document.getElementById("progressFill");
+  var startBtn = document.getElementById("startBtn");
+  var resetBtn = document.getElementById("resetBtn");
+  var durationSlider = document.getElementById("durationSlider");
+  var durationLabel = document.getElementById("durationLabel");
+  var rateSlider = document.getElementById("rateSlider");
+  var rateLabel = document.getElementById("rateLabel");
+  var servoPill = document.getElementById("servoPill");
+  var servoStateText = document.getElementById("servoStateText");
+  var gaugeFill = document.getElementById("gaugeFill");
+  var footNote = document.getElementById("footNote");
+
+  var mqttReady = false;
+  var editingDuration = false;
+  var editingRate = false;
+  var latestDurationSec = 10;
+  var wasRunning = false;
+
+  // ---- MQTT (מצב חי - עדכון כמעט מיידי, ופקודות הפעלה מיידיות) ----
+  var MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+  var MQTT_TOPIC_STATUS = "zvikamayer-servotimer/status";
+  var MQTT_TOPIC_CMD = "zvikamayer-servotimer/command";
+
+  var mqttClient = mqtt.connect(MQTT_URL, { clientId: "site-" + Math.random().toString(16).slice(2) });
+
+  mqttClient.on("connect", function () {
+    mqttReady = true;
+    mqttClient.subscribe(MQTT_TOPIC_STATUS);
+    footNote.textContent = "מחובר בלייב · ממתין לעדכון מהבקר";
+  });
+
+  mqttClient.on("reconnect", function () { mqttReady = false; });
+  mqttClient.on("close", function () { mqttReady = false; });
+
+  mqttClient.on("message", function (topic, message) {
+    if (topic !== MQTT_TOPIC_STATUS) return;
+    try {
+      var data = JSON.parse(message.toString());
+      renderStatus(data);
+      footNote.textContent = "מחובר בלייב";
+    } catch (e) { /* התעלמות מהודעה פגומה */ }
+  });
+
+  function renderStatus(data) {
+    var running = !!data.timerRunning;
+    var durationSec = data.timerDurationSec || 0;
+    var remainingMs = data.timerRemainingMs || 0;
+    var remainingSec = Math.ceil(remainingMs / 1000);
+
+    latestDurationSec = durationSec;
+    latestRemainingMs = remainingMs;
+
+    pill.classList.toggle("on", running);
+    statusText.textContent = running ? "הטיימר פועל" : "ממתין להתחלה";
+    countdownEl.classList.toggle("running", running);
+    countdownEl.textContent = "0:" + pad(remainingSec);
+    document.body.classList.toggle("armed", running);
+
+    if (running && !wasRunning) startSuspenseSound();
+    if (!running && wasRunning) {
+      stopSuspenseSound();
+      if (remainingMs <= 0) playFailureBuzzer(); // הטיימר נגמר לבד, לא איפוס ידני
+    }
+    wasRunning = running;
+
+    var pct = durationSec > 0 ? Math.max(0, Math.min(100, (remainingMs / (durationSec * 1000)) * 100)) : 0;
+    progressFill.style.width = pct + "%";
+
+    startBtn.disabled = !mqttReady || running;
+    resetBtn.disabled = !mqttReady;
+
+    if (!editingDuration) {
+      durationSlider.disabled = !mqttReady || running;
+      durationSlider.value = durationSec;
+      durationLabel.textContent = durationSec + " שניות";
+    }
+
+    if (!editingRate) {
+      rateSlider.disabled = !mqttReady;
+      var rate = typeof data.servoRateSec === "number" ? data.servoRateSec : 1;
+      rateSlider.value = rate;
+      rateLabel.textContent = rate.toFixed(1) + " שניות";
+    }
+
+    var angle = typeof data.servoAngle === "number" ? data.servoAngle : 0;
+    var sweeping = !!data.servoSweeping;
+    servoPill.classList.toggle("on", angle > 5 || sweeping);
+    servoStateText.textContent = sweeping ? "בתנועה…" : (angle > 5 ? "פתוח (" + Math.round(angle) + "°)" : "סגור");
+    gaugeFill.style.width = Math.max(0, Math.min(100, (angle / 180) * 100)) + "%";
+  }
+
+  function sendCmd(cmd) {
+    if (!mqttReady) {
+      footNote.textContent = "אין עדיין חיבור לייב - נסי שוב בעוד רגע";
+      return;
+    }
+    mqttClient.publish(MQTT_TOPIC_CMD, cmd);
+  }
+
+  startBtn.addEventListener("click", function () {
+    ensureAudioCtx(); // פותח את האודיו כאן (מחוות משתמש) כדי שהצליל יוכל להתחיל אוטומטית בהמשך
+    sendCmd("start");
+  });
+  resetBtn.addEventListener("click", function () {
+    stopSuspenseSound(); // עצירה מיידית, בלי לחכות להדהוד מה-MQTT
+    sendCmd("reset");
+  });
+
+  // ---- משך הטיימר ----
+  durationSlider.addEventListener("pointerdown", function () { editingDuration = true; });
+  durationSlider.addEventListener("input", function () {
+    durationLabel.textContent = durationSlider.value + " שניות";
+  });
+  function commitDuration() {
+    editingDuration = false;
+    sendCmd("duration:" + durationSlider.value);
+  }
+  durationSlider.addEventListener("change", commitDuration);
+  durationSlider.addEventListener("pointerup", function () { setTimeout(commitDuration, 0); });
+
+  // ---- קצב פתיחה ----
+  rateSlider.addEventListener("pointerdown", function () { editingRate = true; });
+  rateSlider.addEventListener("input", function () {
+    rateLabel.textContent = parseFloat(rateSlider.value).toFixed(1) + " שניות";
+  });
+  function commitRate() {
+    editingRate = false;
+    sendCmd("rate:" + parseFloat(rateSlider.value).toFixed(1));
+  }
+  rateSlider.addEventListener("change", commitRate);
+  rateSlider.addEventListener("pointerup", function () { setTimeout(commitRate, 0); });
+</script>
+
+</body>
+</html>
