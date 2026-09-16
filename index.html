@@ -61,6 +61,19 @@
 
   @media (prefers-reduced-motion: reduce) { .status-pill.on .dot { animation: none; } }
 
+  .device-warning {
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    background: rgba(255, 106, 77, 0.1);
+    padding: 8px 16px;
+    border-radius: 10px;
+    font-size: clamp(0.8rem, 1.6vw, 1rem);
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .device-warning[hidden] { display: none; }
+
   @keyframes pulse {
     0%, 100% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--good) 22%, transparent); }
     50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--good) 10%, transparent); }
@@ -209,6 +222,7 @@
 
 <div class="hero">
   <div class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">טוען…</span></div>
+  <div class="device-warning" id="deviceWarning" hidden>⚠️ הבקר לא מחובר כרגע — פקודות לא יתקבלו</div>
   <div class="countdown" id="countdown">--:--</div>
   <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
   <div class="action-row">
@@ -379,37 +393,74 @@
   var servoStateText = document.getElementById("servoStateText");
   var gaugeFill = document.getElementById("gaugeFill");
   var footNote = document.getElementById("footNote");
+  var deviceWarning = document.getElementById("deviceWarning");
 
   var mqttReady = false;
   var editingDuration = false;
   var editingRate = false;
   var latestDurationSec = 10;
   var wasRunning = false;
+  var deviceOnline = null; // null = עוד לא ידוע, true/false = ידוע בוודאות (בזכות ה-Last Will בבקר)
 
   // ---- MQTT (מצב חי - עדכון כמעט מיידי, ופקודות הפעלה מיידיות) ----
   var MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
   var MQTT_TOPIC_STATUS = "zvikamayer-servotimer/status";
   var MQTT_TOPIC_CMD = "zvikamayer-servotimer/command";
+  var MQTT_TOPIC_INFO = "zvikamayer-servotimer/info";
 
   var mqttClient = mqtt.connect(MQTT_URL, { clientId: "site-" + Math.random().toString(16).slice(2) });
 
   mqttClient.on("connect", function () {
     mqttReady = true;
     mqttClient.subscribe(MQTT_TOPIC_STATUS);
-    footNote.textContent = "מחובר בלייב · ממתין לעדכון מהבקר";
+    mqttClient.subscribe(MQTT_TOPIC_INFO);
+    footNote.textContent = "מחובר לשרת · ממתין לעדכון מהבקר";
+    updateButtons();
   });
 
-  mqttClient.on("reconnect", function () { mqttReady = false; });
-  mqttClient.on("close", function () { mqttReady = false; });
+  mqttClient.on("reconnect", function () {
+    mqttReady = false;
+    deviceOnline = null;
+    deviceWarning.hidden = true;
+    updateButtons();
+  });
+  mqttClient.on("close", function () {
+    mqttReady = false;
+    deviceOnline = null;
+    deviceWarning.hidden = true;
+    footNote.textContent = "אין חיבור לשרת - מנסה שוב...";
+    updateButtons();
+  });
 
   mqttClient.on("message", function (topic, message) {
-    if (topic !== MQTT_TOPIC_STATUS) return;
     try {
       var data = JSON.parse(message.toString());
-      renderStatus(data);
-      footNote.textContent = "מחובר בלייב";
+      if (topic === MQTT_TOPIC_STATUS) {
+        renderStatus(data);
+      } else if (topic === MQTT_TOPIC_INFO) {
+        renderDeviceInfo(data);
+      }
     } catch (e) { /* התעלמות מהודעה פגומה */ }
   });
+
+  // הבקר מפרסם כאן {"online":true/false} - כולל דרך Last Will אם הוא מתנתק
+  // בפתאומיות. זה מה שמבדיל בין "הבקר מחובר עכשיו" לבין "רואים סטטוס ישן".
+  function renderDeviceInfo(data) {
+    deviceOnline = !!data.online;
+    deviceWarning.hidden = deviceOnline;
+    footNote.textContent = deviceOnline
+      ? "מחובר בלייב · הבקר מחובר (" + (data.ip || "") + ")"
+      : "הבקר לא מחובר כרגע";
+    updateButtons();
+  }
+
+  function updateButtons() {
+    var known = mqttReady && deviceOnline === true;
+    startBtn.disabled = !known || wasRunning;
+    resetBtn.disabled = !known;
+    durationSlider.disabled = !known || wasRunning;
+    rateSlider.disabled = !known;
+  }
 
   function renderStatus(data) {
     var running = !!data.timerRunning;
@@ -436,17 +487,14 @@
     var pct = durationSec > 0 ? Math.max(0, Math.min(100, (remainingMs / (durationSec * 1000)) * 100)) : 0;
     progressFill.style.width = pct + "%";
 
-    startBtn.disabled = !mqttReady || running;
-    resetBtn.disabled = !mqttReady;
+    updateButtons();
 
     if (!editingDuration) {
-      durationSlider.disabled = !mqttReady || running;
       durationSlider.value = durationSec;
       durationLabel.textContent = durationSec + " שניות";
     }
 
     if (!editingRate) {
-      rateSlider.disabled = !mqttReady;
       var rate = typeof data.servoRateSec === "number" ? data.servoRateSec : 1;
       rateSlider.value = rate;
       rateLabel.textContent = rate.toFixed(1) + " שניות";
