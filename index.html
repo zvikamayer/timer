@@ -401,6 +401,7 @@
   var latestDurationSec = 10;
   var wasRunning = false;
   var deviceOnline = null; // null = עוד לא ידוע, true/false = ידוע בוודאות (בזכות ה-Last Will בבקר)
+  var readyToStart = true; // false אחרי שמחזור הסתיים לבד - צריך ללחוץ איפוס כדי להתחיל שוב
 
   // ---- MQTT (מצב חי - עדכון כמעט מיידי, ופקודות הפעלה מיידיות) ----
   var MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
@@ -456,7 +457,7 @@
 
   function updateButtons() {
     var known = mqttReady && deviceOnline === true;
-    startBtn.disabled = !known || wasRunning;
+    startBtn.disabled = !known || wasRunning || !readyToStart;
     resetBtn.disabled = !known;
     durationSlider.disabled = !known || wasRunning;
     rateSlider.disabled = !known;
@@ -471,8 +472,12 @@
     latestDurationSec = durationSec;
     latestRemainingMs = remainingMs;
 
+    readyToStart = data.readyToStart !== false;
+
     pill.classList.toggle("on", running);
-    statusText.textContent = running ? "הטיימר פועל" : "ממתין להתחלה";
+    statusText.textContent = running
+      ? "הטיימר פועל"
+      : (readyToStart ? "ממתין להתחלה" : "לחצי איפוס כדי להתחיל מחזור חדש");
     countdownEl.classList.toggle("running", running);
     countdownEl.textContent = "0:" + pad(remainingSec);
     document.body.classList.toggle("armed", running);
