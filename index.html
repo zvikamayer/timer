@@ -271,14 +271,6 @@
       <input type="range" id="rateSlider" min="0.1" max="10" step="0.1" value="1.0" disabled>
       <small>שניות לתנועה מלאה של 90 מעלות (עד עשירית שנייה, למשל 1.1).</small>
     </div>
-
-    <div class="thin-divider"></div>
-
-    <div class="field">
-      <div class="field-head"><strong>זווית התחלה (סגור)</strong><span id="homeLabel">-- °</span></div>
-      <input type="range" id="homeSlider" min="0" max="60" step="1" value="0" disabled>
-      <small>הסרוו תמיד חוזר לכאן אחרי הפתיחה (איפוס). נשמר גם אחרי כיבוי. הפתיחה נשארת ב-90°.</small>
-    </div>
   </div>
 
   <div class="card servo-card">
@@ -425,8 +417,6 @@
   var durationLabel = document.getElementById("durationLabel");
   var rateSlider = document.getElementById("rateSlider");
   var rateLabel = document.getElementById("rateLabel");
-  var homeSlider = document.getElementById("homeSlider");
-  var homeLabel = document.getElementById("homeLabel");
   var servoPill = document.getElementById("servoPill");
   var servoStateText = document.getElementById("servoStateText");
   var gaugeFill = document.getElementById("gaugeFill");
@@ -445,7 +435,6 @@
   var mqttReady = false;
   var editingDuration = false;
   var editingRate = false;
-  var editingHome = false;
   var latestDurationSec = 10;
   var wasRunning = false;
   var deviceOnline = null; // null = עוד לא ידוע, true/false = ידוע בוודאות (בזכות ה-Last Will בבקר)
@@ -513,7 +502,6 @@
     triggerBtn.disabled = !known; // הפעלה יזומה - זמינה תמיד כשהבקר מחובר, גם תוך כדי ריצה
     durationSlider.disabled = !known || wasRunning;
     rateSlider.disabled = !known;
-    homeSlider.disabled = !known;
   }
 
   function renderStatus(data) {
@@ -558,17 +546,10 @@
       rateLabel.textContent = rate.toFixed(1) + " שניות";
     }
 
-    var home = typeof data.homeAngle === "number" ? data.homeAngle : 0;
-    if (!editingHome) {
-      homeSlider.value = home;
-      homeLabel.textContent = home + "°";
-    }
-
     var angle = typeof data.servoAngle === "number" ? data.servoAngle : 0;
     var sweeping = !!data.servoSweeping;
-    var isOpen = angle > home + 5;
-    servoPill.classList.toggle("on", isOpen || sweeping);
-    servoStateText.textContent = sweeping ? "בתנועה…" : (isOpen ? "פתוח (" + Math.round(angle) + "°)" : "סגור");
+    servoPill.classList.toggle("on", angle > 5 || sweeping);
+    servoStateText.textContent = sweeping ? "בתנועה…" : (angle > 5 ? "פתוח (" + Math.round(angle) + "°)" : "סגור");
     gaugeFill.style.width = Math.max(0, Math.min(100, (angle / 180) * 100)) + "%";
   }
 
@@ -622,18 +603,6 @@
   }
   rateSlider.addEventListener("change", commitRate);
   rateSlider.addEventListener("pointerup", function () { setTimeout(commitRate, 0); });
-
-  // ---- זווית התחלה (בית) ----
-  homeSlider.addEventListener("pointerdown", function () { editingHome = true; });
-  homeSlider.addEventListener("input", function () {
-    homeLabel.textContent = homeSlider.value + "°";
-  });
-  function commitHome() {
-    editingHome = false;
-    sendCmd("home:" + homeSlider.value);
-  }
-  homeSlider.addEventListener("change", commitHome);
-  homeSlider.addEventListener("pointerup", function () { setTimeout(commitHome, 0); });
 </script>
 
 </body>
